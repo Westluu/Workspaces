@@ -139,6 +139,12 @@ button {
   box-shadow: none;
 }
 
+.url-icon {
+  background:
+    radial-gradient(circle at 30% 24%, rgba(255, 255, 255, 0.3), transparent 25%),
+    linear-gradient(145deg, #34d399 0%, #059669 48%, #065f46 100%);
+}
+
 .app-icon-image {
   display: block;
   width: 46px;

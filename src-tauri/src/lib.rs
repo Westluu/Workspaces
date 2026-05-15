@@ -4,12 +4,30 @@ use std::{
     process::Command,
 };
 
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum DockItemRequest {
+    #[serde(rename = "app", rename_all = "camelCase")]
+    App { app_path: String },
+    #[serde(rename = "url")]
+    Url { url: String },
+}
+
 #[tauri::command]
-fn open_app(app_path: String) -> Result<(), String> {
+fn open_dock_item(item: DockItemRequest) -> Result<(), String> {
+    match item {
+        DockItemRequest::App { app_path } => open_with_macos(&app_path),
+        DockItemRequest::Url { url } => open_with_macos(&url),
+    }
+}
+
+fn open_with_macos(target: &str) -> Result<(), String> {
     Command::new("open")
-        .arg(&app_path)
+        .arg(target)
         .spawn()
-        .map_err(|e| format!("Failed to open {}: {}", app_path, e))?;
+        .map_err(|e| format!("Failed to open {}: {}", target, e))?;
     Ok(())
 }
 
@@ -101,7 +119,7 @@ fn safe_file_name(path: &Path) -> String {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![open_app, get_app_icon])
+        .invoke_handler(tauri::generate_handler![open_dock_item, get_app_icon])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
