@@ -90,27 +90,72 @@ fn get_app_icon(app_path: String) -> Result<Vec<u8>, String> {
     fs::read(&output_path).map_err(|e| format!("Failed to read converted app icon: {}", e))
 }
 
-fn read_bundle_icon_name(info_plist: &Path) -> Result<String, String> {
-    let output = Command::new("plutil")
-        .args(["-extract", "CFBundleIconFile", "raw", "-o", "-"])
-        .arg(info_plist)
+#[tauri::command]
+fn get_app_display_name(app_path: String) -> Result<String, String> {
+    let app_path = PathBuf::from(&app_path);
+    let info_plist = app_path.join("Contents").join("Info.plist");
+
+    Ok(read_app_display_name(&app_path, &info_plist))
+}
+
+fn read_app_display_name(app_path: &Path, info_plist: &Path) -> String {
+    read_spotlight_display_name(app_path)
+        .or_else(|| read_bundle_string(info_plist, "CFBundleDisplayName"))
+        .or_else(|| read_bundle_string(info_plist, "CFBundleName"))
+        .unwrap_or_else(|| fallback_app_name(app_path))
+}
+
+fn read_spotlight_display_name(app_path: &Path) -> Option<String> {
+    let output = Command::new("mdls")
+        .args(["-name", "kMDItemDisplayName", "-raw"])
+        .arg(app_path)
         .output()
-        .map_err(|e| format!("Failed to read app metadata: {}", e))?;
+        .ok()?;
 
     if !output.status.success() {
-        return Err(format!(
-            "Failed to read icon metadata from {}: {}",
-            info_plist.display(),
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
+        return None;
     }
 
-    let icon_name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    normalize_metadata_value(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn read_bundle_icon_name(info_plist: &Path) -> Result<String, String> {
+    let icon_name = read_bundle_string(info_plist, "CFBundleIconFile").ok_or_else(|| {
+        format!(
+            "Failed to read icon metadata from {}",
+            info_plist.display()
+        )
+    })?;
+
     if icon_name.is_empty() {
         return Err(format!("No app icon declared in {}", info_plist.display()));
     }
 
     Ok(icon_name)
+}
+
+fn read_bundle_string(info_plist: &Path, key: &str) -> Option<String> {
+    let output = Command::new("plutil")
+        .args(["-extract", key, "raw", "-o", "-"])
+        .arg(info_plist)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    normalize_metadata_value(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn normalize_metadata_value(value: &str) -> Option<String> {
+    let normalized = value.trim();
+
+    if normalized.is_empty() || normalized == "(null)" {
+        None
+    } else {
+        Some(normalized.to_string())
+    }
 }
 
 fn ensure_icns_extension(icon_name: &str) -> String {
@@ -119,6 +164,10 @@ fn ensure_icns_extension(icon_name: &str) -> String {
     } else {
         format!("{}.icns", icon_name)
     }
+}
+
+fn fallback_app_name(path: &Path) -> String {
+    safe_file_name(path).replace('-', " ")
 }
 
 fn safe_file_name(path: &Path) -> String {
@@ -437,7 +486,11 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![open_dock_item, get_app_icon])
+        .invoke_handler(tauri::generate_handler![
+            get_app_display_name,
+            get_app_icon,
+            open_dock_item,
+        ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
 

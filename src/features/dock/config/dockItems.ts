@@ -4,13 +4,13 @@ export const dockItems = [
   {
     id: "vscode",
     type: "app",
-    label: "VS Code",
+    label: "Visual Studio Code",
     appPath: "/Applications/Visual Studio Code.app",
   },
   {
     id: "chrome",
     type: "app",
-    label: "Chrome",
+    label: "Google Chrome",
     appPath: "/Applications/Google Chrome.app",
   },
   {

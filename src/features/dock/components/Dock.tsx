@@ -5,6 +5,7 @@ import { DockItemButton } from "./DockItemButton";
 
 type DockProps = {
   appIconUrls: Record<string, string>;
+  appLabels: Record<string, string>;
   dockItems: DockItem[];
   enableMagnification: boolean;
   onClearTitle: () => void;
@@ -16,6 +17,7 @@ type DockProps = {
 
 export function Dock({
   appIconUrls,
+  appLabels,
   dockItems,
   enableMagnification,
   onClearTitle,
@@ -44,6 +46,7 @@ export function Dock({
             <DockItemButton
               appIconUrl={appIconUrls[item.id]}
               item={item}
+              itemLabel={appLabels[item.id] ?? item.label}
               onIconError={onIconError}
               onOpen={onOpenItem}
               onTitleBlur={onClearTitle}

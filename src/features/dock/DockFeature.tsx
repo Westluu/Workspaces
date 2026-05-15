@@ -4,6 +4,7 @@ import { Dock } from "./components/Dock";
 import { DockTitle } from "./components/DockTitle";
 import { ErrorToast } from "./components/ErrorToast";
 import { useDockIcons } from "./hooks/useDockIcons";
+import { useDockLabels } from "./hooks/useDockLabels";
 import { useDockTitle } from "./hooks/useDockTitle";
 import { useNativeDockMouseTracking } from "./hooks/useNativeDockMouseTracking";
 import { openDockItem } from "./services/dockService";
@@ -12,6 +13,7 @@ import "./dock.css";
 
 export function DockFeature() {
   const [error, setError] = useState<string | null>(null);
+  const { appLabels } = useDockLabels(dockItems);
   const { appIconUrls, removeIcon } = useDockIcons(dockItems);
   const {
     clearDockTitle,
@@ -40,6 +42,7 @@ export function DockFeature() {
       {dockTitle && <DockTitle dockTitle={dockTitle} />}
       <Dock
         appIconUrls={appIconUrls}
+        appLabels={appLabels}
         dockItems={dockItems}
         enableMagnification={enableDockMagnification}
         onClearTitle={clearDockTitle}

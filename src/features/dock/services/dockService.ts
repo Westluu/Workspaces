@@ -12,3 +12,9 @@ export function getAppIcon(appPath: string) {
     appPath,
   });
 }
+
+export function getAppDisplayName(appPath: string) {
+  return invoke<string>("get_app_display_name", {
+    appPath,
+  });
+}

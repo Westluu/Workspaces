@@ -5,6 +5,7 @@ import { getFallbackIcon } from "../utils/iconUtils";
 type DockItemButtonProps = {
   appIconUrl?: string;
   item: DockItem;
+  itemLabel: string;
   onIconError: (itemId: string) => void;
   onOpen: (item: DockItem) => void;
   onTitleBlur: () => void;
@@ -15,6 +16,7 @@ type DockItemButtonProps = {
 export function DockItemButton({
   appIconUrl,
   item,
+  itemLabel,
   onIconError,
   onOpen,
   onTitleBlur,
@@ -25,11 +27,11 @@ export function DockItemButton({
     <button
       className="dock-item"
       type="button"
-      aria-label={`Open ${item.label}`}
-      data-dock-label={item.label}
-      onMouseEnter={(e) => onTitleMouse(item.label, e)}
-      onMouseMove={(e) => onTitleMouse(item.label, e)}
-      onFocus={(e) => onTitleFocus(item.label, e)}
+      aria-label={`Open ${itemLabel}`}
+      data-dock-label={itemLabel}
+      onMouseEnter={(e) => onTitleMouse(itemLabel, e)}
+      onMouseMove={(e) => onTitleMouse(itemLabel, e)}
+      onFocus={(e) => onTitleFocus(itemLabel, e)}
       onBlur={onTitleBlur}
       onClick={() => onOpen(item)}
     >
