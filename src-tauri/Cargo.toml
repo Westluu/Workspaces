@@ -25,5 +25,5 @@ serde_json = "1"
 libc = "0.2"
 block2 = "0.6.2"
 objc2 = "0.6.4"
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["block2", "NSColor", "NSEvent", "NSGraphics", "NSPanel", "NSResponder", "NSScreen", "NSView", "NSWindow", "objc2-core-foundation"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["objc2-core-foundation"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["block2", "NSColor", "NSEvent", "NSGraphics", "NSPanel", "NSResponder", "NSRunningApplication", "NSScreen", "NSView", "NSWindow", "NSWorkspace", "objc2-core-foundation"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["block2", "NSNotification", "NSOperation", "NSString", "objc2-core-foundation"] }

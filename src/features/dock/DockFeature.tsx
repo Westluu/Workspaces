@@ -6,6 +6,7 @@ import { ErrorToast } from "./components/ErrorToast";
 import { useDockIcons } from "./hooks/useDockIcons";
 import { useDockLabels } from "./hooks/useDockLabels";
 import { useDockTitle } from "./hooks/useDockTitle";
+import { useDockVisibility } from "./hooks/useDockVisibility";
 import { useNativeDockMouseTracking } from "./hooks/useNativeDockMouseTracking";
 import { openDockItem } from "./services/dockService";
 import type { DockItem } from "./types";
@@ -27,6 +28,9 @@ export function DockFeature() {
     clearDockTitle,
     showDockTitle,
   });
+  const { isDockHidden } = useDockVisibility({
+    clearDockTitle,
+  });
 
   async function handleOpenItem(item: DockItem) {
     try {
@@ -38,8 +42,8 @@ export function DockFeature() {
   }
 
   return (
-    <main className="playground">
-      {dockTitle && <DockTitle dockTitle={dockTitle} />}
+    <main className={`playground ${isDockHidden ? "dock-hidden" : ""}`}>
+      {!isDockHidden && dockTitle && <DockTitle dockTitle={dockTitle} />}
       <Dock
         appIconUrls={appIconUrls}
         appLabels={appLabels}

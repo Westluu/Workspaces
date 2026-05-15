@@ -1,3 +1,5 @@
+#[cfg(target_os = "macos")]
+use std::ptr::NonNull;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -18,10 +20,11 @@ use objc2::MainThreadOnly;
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{
     NSBackingStoreType, NSColor, NSEvent, NSEventMask, NSPanel, NSScreen, NSView, NSWindow,
-    NSWindowCollectionBehavior, NSWindowStyleMask,
+    NSWindowCollectionBehavior, NSWindowStyleMask, NSWorkspace,
+    NSWorkspaceActiveSpaceDidChangeNotification, NSWorkspaceDidActivateApplicationNotification,
 };
 #[cfg(target_os = "macos")]
-use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize};
+use objc2_foundation::{MainThreadMarker, NSNotification, NSPoint, NSRect, NSSize};
 
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -37,6 +40,17 @@ struct DockMouseMovePayload {
     x: f64,
     y: f64,
 }
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DockVisibilityPayload {
+    hidden: bool,
+}
+
+#[cfg(target_os = "macos")]
+const FINDER_BUNDLE_ID: &str = "com.apple.finder";
+#[cfg(target_os = "macos")]
+const WORKSPACE_DOCK_BUNDLE_ID: &str = "com.wesleyluu.workspace-dock";
 
 #[tauri::command]
 fn open_dock_item(item: DockItemRequest) -> Result<(), String> {
@@ -98,6 +112,11 @@ fn get_app_display_name(app_path: String) -> Result<String, String> {
     Ok(read_app_display_name(&app_path, &info_plist))
 }
 
+#[tauri::command]
+fn get_dock_visibility() -> DockVisibilityPayload {
+    current_dock_visibility()
+}
+
 fn read_app_display_name(app_path: &Path, info_plist: &Path) -> String {
     read_spotlight_display_name(app_path)
         .or_else(|| read_bundle_string(info_plist, "CFBundleDisplayName"))
@@ -120,12 +139,8 @@ fn read_spotlight_display_name(app_path: &Path) -> Option<String> {
 }
 
 fn read_bundle_icon_name(info_plist: &Path) -> Result<String, String> {
-    let icon_name = read_bundle_string(info_plist, "CFBundleIconFile").ok_or_else(|| {
-        format!(
-            "Failed to read icon metadata from {}",
-            info_plist.display()
-        )
-    })?;
+    let icon_name = read_bundle_string(info_plist, "CFBundleIconFile")
+        .ok_or_else(|| format!("Failed to read icon metadata from {}", info_plist.display()))?;
 
     if icon_name.is_empty() {
         return Err(format!("No app icon declared in {}", info_plist.display()));
@@ -460,12 +475,87 @@ fn install_inactive_mouse_tracking<R: tauri::Runtime>(
     }
 }
 
+#[cfg(target_os = "macos")]
+fn install_active_app_tracking<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>) {
+    emit_current_dock_visibility(&app_handle);
+
+    let activation_handle = app_handle.clone();
+    let activation_block = RcBlock::new(move |_notification: NonNull<NSNotification>| {
+        emit_current_dock_visibility(&activation_handle);
+    });
+
+    let space_handle = app_handle.clone();
+    let space_block = RcBlock::new(move |_notification: NonNull<NSNotification>| {
+        emit_current_dock_visibility(&space_handle);
+    });
+
+    let workspace = NSWorkspace::sharedWorkspace();
+    let notification_center = workspace.notificationCenter();
+    let activation_observer = unsafe {
+        notification_center.addObserverForName_object_queue_usingBlock(
+            Some(NSWorkspaceDidActivateApplicationNotification),
+            None,
+            None,
+            &activation_block,
+        )
+    };
+    let space_observer = unsafe {
+        notification_center.addObserverForName_object_queue_usingBlock(
+            Some(NSWorkspaceActiveSpaceDidChangeNotification),
+            None,
+            None,
+            &space_block,
+        )
+    };
+
+    let _activation_observer = Retained::into_raw(activation_observer);
+    let _space_observer = Retained::into_raw(space_observer);
+    let _activation_block = RcBlock::into_raw(activation_block);
+    let _space_block = RcBlock::into_raw(space_block);
+}
+
+#[cfg(target_os = "macos")]
+fn emit_current_dock_visibility<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) {
+    let _ = app_handle.emit("native-dock-visibility", current_dock_visibility());
+}
+
+#[cfg(target_os = "macos")]
+fn current_dock_visibility() -> DockVisibilityPayload {
+    let hidden = should_hide_dock_for_bundle_id(frontmost_app_bundle_id().as_deref());
+
+    DockVisibilityPayload { hidden }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn current_dock_visibility() -> DockVisibilityPayload {
+    DockVisibilityPayload { hidden: false }
+}
+
+#[cfg(target_os = "macos")]
+fn should_hide_dock_for_bundle_id(bundle_id: Option<&str>) -> bool {
+    bundle_id
+        .map(|bundle_id| bundle_id != FINDER_BUNDLE_ID && bundle_id != WORKSPACE_DOCK_BUNDLE_ID)
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "macos")]
+fn frontmost_app_bundle_id() -> Option<String> {
+    let workspace = NSWorkspace::sharedWorkspace();
+    workspace.frontmostApplication().and_then(|app| {
+        app.bundleIdentifier()
+            .map(|bundle_id| bundle_id.to_string())
+    })
+}
+
 #[cfg(not(target_os = "macos"))]
 fn configure_dock_window_interaction<R: tauri::Runtime>(
     _app: &mut tauri::App<R>,
 ) -> Result<(), String> {
     Ok(())
 }
+
+#[cfg(not(target_os = "macos"))]
+fn install_active_app_tracking<R: tauri::Runtime>(_app_handle: tauri::AppHandle<R>) {}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -484,11 +574,13 @@ pub fn run() {
                     eprintln!("{}", window_error);
                 }
             }
+            install_active_app_tracking(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_app_display_name,
             get_app_icon,
+            get_dock_visibility,
             open_dock_item,
         ])
         .build(tauri::generate_context!())
