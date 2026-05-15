@@ -14,8 +14,8 @@
     "windows": [
       {
         "title": "workspace-dock",
-        "width": 470,
-        "height": 112,
+        "width": 560,
+        "height": 108,
         "decorations": false,
         "resizable": false,
         "alwaysOnTop": true,

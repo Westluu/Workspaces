@@ -70,6 +70,7 @@ function getFallbackIcon(item: DockItem) {
 function App() {
   const [error, setError] = useState<string | null>(null);
   const [appIconUrls, setAppIconUrls] = useState<Record<string, string>>({});
+  const [activeLabel, setActiveLabel] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -96,7 +97,7 @@ function App() {
             });
           }
         });
-      });
+    });
 
     return () => {
       isMounted = false;
@@ -120,8 +121,12 @@ function App() {
 
   return (
     <main className="dock-shell">
-      <section className="dock" onMouseDown={startDrag}>
-        <span className="workspace-label">{workspace.name}</span>
+      {activeLabel && <span className="dock-tooltip">{activeLabel}</span>}
+      <section
+        className="dock"
+        onMouseDown={startDrag}
+        onMouseLeave={() => setActiveLabel(null)}
+      >
         {workspace.dockItems.map((item) => {
           const appIconUrl = appIconUrls[item.id];
 
@@ -130,8 +135,10 @@ function App() {
               key={item.id}
               className="dock-item"
               aria-label={`Open ${item.label}`}
-              title={item.label}
               onMouseDown={(e) => e.stopPropagation()}
+              onMouseEnter={() => setActiveLabel(item.label)}
+              onFocus={() => setActiveLabel(item.label)}
+              onBlur={() => setActiveLabel(null)}
               onClick={() => openDockItem(item)}
             >
               <span
@@ -158,10 +165,24 @@ function App() {
                   getFallbackIcon(item)
                 )}
               </span>
-              <span className="app-label">{item.label}</span>
+              <span className="running-dot" aria-hidden="true" />
             </button>
           );
         })}
+        <span className="dock-divider" aria-hidden="true" />
+        <button
+          className="dock-item add-dock-item"
+          aria-label="Add item"
+          onMouseDown={(e) => e.stopPropagation()}
+          onMouseEnter={() => setActiveLabel("Add item")}
+          onFocus={() => setActiveLabel("Add item")}
+          onBlur={() => setActiveLabel(null)}
+          onClick={() => setError("Add item UI is next")}
+        >
+          <span className="app-icon add-icon" aria-hidden="true">
+            +
+          </span>
+        </button>
       </section>
       {error && <span className="error-toast">{error}</span>}
     </main>
