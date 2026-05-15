@@ -4,8 +4,24 @@ use std::{
     process::Command,
 };
 
-use serde::Deserialize;
-use tauri::{Manager, PhysicalPosition};
+use serde::{Deserialize, Serialize};
+use tauri::{Emitter, Manager, PhysicalPosition};
+
+#[cfg(target_os = "macos")]
+use block2::RcBlock;
+#[cfg(target_os = "macos")]
+use objc2::rc::Retained;
+#[cfg(target_os = "macos")]
+use objc2::runtime::AnyObject;
+#[cfg(target_os = "macos")]
+use objc2::MainThreadOnly;
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{
+    NSBackingStoreType, NSColor, NSEvent, NSEventMask, NSPanel, NSScreen, NSView, NSWindow,
+    NSWindowCollectionBehavior, NSWindowStyleMask,
+};
+#[cfg(target_os = "macos")]
+use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize};
 
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -14,6 +30,12 @@ enum DockItemRequest {
     App { app_path: String },
     #[serde(rename = "url")]
     Url { url: String },
+}
+
+#[derive(Clone, Serialize)]
+struct DockMouseMovePayload {
+    x: f64,
+    y: f64,
 }
 
 #[tauri::command]
@@ -230,6 +252,172 @@ fn position_dock_window<R: tauri::Runtime>(app: &tauri::App<R>) -> Result<(), St
         .map_err(|e| format!("Failed to position dock window: {}", e))
 }
 
+#[cfg(target_os = "macos")]
+fn configure_dock_window_interaction<R: tauri::Runtime>(
+    app: &mut tauri::App<R>,
+) -> Result<(), String> {
+    app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+    app.set_dock_visibility(false);
+
+    let window = app
+        .get_webview_window("main")
+        .ok_or("Main dock window was not found")?;
+    let ns_window_ptr = window
+        .ns_window()
+        .map_err(|e| format!("Failed to access native dock window: {}", e))?;
+    let ns_window = unsafe { &*(ns_window_ptr.cast::<NSWindow>()) };
+
+    let style_mask = ns_window.styleMask();
+    ns_window.setStyleMask(style_mask | NSWindowStyleMask::NonactivatingPanel);
+    ns_window.setAcceptsMouseMovedEvents(true);
+    ns_window.setHidesOnDeactivate(false);
+    ns_window.setCanHide(false);
+    unsafe {
+        ns_window.setReleasedWhenClosed(false);
+    }
+    ns_window.setCollectionBehavior(
+        NSWindowCollectionBehavior::Stationary
+            | NSWindowCollectionBehavior::IgnoresCycle
+            | NSWindowCollectionBehavior::FullScreenNone,
+    );
+    ns_window.setLevel(20);
+    ns_window.orderFrontRegardless();
+
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn install_native_dock_panel<R: tauri::Runtime>(app: &mut tauri::App<R>) -> Result<(), String> {
+    app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+    app.set_dock_visibility(false);
+
+    let mtm = MainThreadMarker::new().ok_or("Native dock panel must be created on main thread")?;
+    let window = app
+        .get_webview_window("main")
+        .ok_or("Main dock window was not found")?;
+    let ns_window_ptr = window
+        .ns_window()
+        .map_err(|e| format!("Failed to access native dock window: {}", e))?;
+    let ns_view_ptr = window
+        .ns_view()
+        .map_err(|e| format!("Failed to access native dock webview: {}", e))?;
+
+    let ns_window = unsafe { &*(ns_window_ptr.cast::<NSWindow>()) };
+    let ns_view = unsafe { &*(ns_view_ptr.cast::<NSView>()) };
+    let frame = dock_panel_frame(mtm, ns_window.frame());
+    let content_frame = NSRect::new(
+        NSPoint::new(0.0, 0.0),
+        NSSize::new(frame.size.width, frame.size.height),
+    );
+
+    let panel = NSPanel::initWithContentRect_styleMask_backing_defer(
+        NSPanel::alloc(mtm),
+        frame,
+        NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel,
+        NSBackingStoreType::Buffered,
+        false,
+    );
+
+    configure_native_dock_panel(&panel);
+
+    ns_view.removeFromSuperview();
+    ns_view.setFrame(content_frame);
+    panel.setContentView(Some(ns_view));
+    ns_window.orderOut(None);
+    panel.setFrame_display(frame, true);
+    panel.orderFrontRegardless();
+    install_inactive_mouse_tracking(app.handle().clone(), frame);
+
+    let _panel = Retained::into_raw(panel);
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn install_native_dock_panel<R: tauri::Runtime>(_app: &mut tauri::App<R>) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn configure_native_dock_panel(panel: &NSPanel) {
+    panel.setFloatingPanel(true);
+    panel.setBecomesKeyOnlyIfNeeded(true);
+    panel.setWorksWhenModal(true);
+    panel.setAcceptsMouseMovedEvents(true);
+    panel.setHidesOnDeactivate(false);
+    panel.setCanHide(false);
+    panel.setCollectionBehavior(
+        NSWindowCollectionBehavior::Stationary
+            | NSWindowCollectionBehavior::IgnoresCycle
+            | NSWindowCollectionBehavior::FullScreenNone,
+    );
+    panel.setLevel(20);
+    panel.setHasShadow(false);
+    panel.setOpaque(false);
+    panel.setBackgroundColor(Some(&NSColor::clearColor()));
+    unsafe {
+        panel.setReleasedWhenClosed(false);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn dock_panel_frame(mtm: MainThreadMarker, fallback_frame: NSRect) -> NSRect {
+    let screen = NSScreen::mainScreen(mtm);
+    let screen_frame = screen
+        .as_ref()
+        .map(|screen| screen.frame())
+        .unwrap_or(fallback_frame);
+    let width = fallback_frame.size.width;
+    let height = fallback_frame.size.height;
+    let bottom_offset = 6.0;
+    let x = screen_frame.origin.x + ((screen_frame.size.width - width) / 2.0);
+    let y = screen_frame.origin.y + bottom_offset;
+
+    NSRect::new(NSPoint::new(x, y), NSSize::new(width, height))
+}
+
+#[cfg(target_os = "macos")]
+fn install_inactive_mouse_tracking<R: tauri::Runtime>(
+    app_handle: tauri::AppHandle<R>,
+    panel_frame: NSRect,
+) {
+    let block = RcBlock::new(move |_event: std::ptr::NonNull<NSEvent>| {
+        let mouse = NSEvent::mouseLocation();
+        let relative_x = mouse.x - panel_frame.origin.x;
+        let relative_y = panel_frame.size.height - (mouse.y - panel_frame.origin.y);
+
+        if relative_x >= 0.0
+            && relative_x <= panel_frame.size.width
+            && relative_y >= 0.0
+            && relative_y <= panel_frame.size.height
+        {
+            let _ = app_handle.emit(
+                "native-dock-mouse-move",
+                DockMouseMovePayload {
+                    x: relative_x,
+                    y: relative_y,
+                },
+            );
+        } else {
+            let _ = app_handle.emit("native-dock-mouse-leave", ());
+        }
+    });
+
+    if let Some(monitor) =
+        NSEvent::addGlobalMonitorForEventsMatchingMask_handler(NSEventMask::MouseMoved, &block)
+    {
+        let _monitor: *mut AnyObject = Retained::into_raw(monitor);
+        let _block = RcBlock::into_raw(block);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn configure_dock_window_interaction<R: tauri::Runtime>(
+    _app: &mut tauri::App<R>,
+) -> Result<(), String> {
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     install_dock_restore_signal_handler();
@@ -240,6 +428,12 @@ pub fn run() {
             move_system_dock_left();
             if let Err(e) = position_dock_window(app) {
                 eprintln!("{}", e);
+            }
+            if let Err(panel_error) = install_native_dock_panel(app) {
+                eprintln!("{}", panel_error);
+                if let Err(window_error) = configure_dock_window_interaction(app) {
+                    eprintln!("{}", window_error);
+                }
             }
             Ok(())
         })
