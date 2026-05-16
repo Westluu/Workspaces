@@ -41,10 +41,15 @@ Slice 4 adds a persistent app metadata cache:
 - When disk metadata is served, Rust starts a background folder-scan refresh and rewrites the disk cache for the next launch.
 - `refresh_installed_apps` still forces an immediate folder scan and updates both memory and disk cache.
 
+Slice 5 removes icon cache filename collisions:
+
+- Native icon PNG cache filenames are keyed by a SHA-256 hash of the full app path.
+- New cache keys are prefixed with `v2-` so the cache format can evolve safely.
+- Existing filename-derived cache entries are read as a migration fallback and copied into the hashed cache path on first use.
+
 Later slices can change internals without changing the modal:
 
 - Use Spotlight/`NSMetadataQuery` or `mdfind` as the primary discovery source.
-- Cache icons by full path hash instead of filename-derived cache keys.
 - Add directory watching or explicit refresh UI once the catalog is stable.
 
 Baseline metrics to compare before and after each slice:
@@ -218,7 +223,8 @@ Native icon behavior:
 - On cache miss, Rust reads `CFBundleIconFile` from the app bundle's `Info.plist` and converts the `.icns` file with `sips -s format png -Z 256`.
 - If the bundle does not expose a normal `.icns`, Rust falls back to macOS `NSWorkspace.iconForFile` and writes that PNG into the same cache.
 - Converted PNGs are stored under the temp directory in `workspace-dock-icons`.
-- The cache filename uses `safe_file_name(app_path)`, so it is stable for a given app filename but is not a full path hash.
+- The cache filename uses a `v2-` SHA-256 hash of the full app path.
+- Old filename-derived cache files are read as a one-time migration fallback and copied into the hashed cache location.
 
 ## Modal Filtering And Sections
 
@@ -302,7 +308,6 @@ The hook-based preload is the key idea. The app list is not requested on each mo
 
 - The installed app list has a refresh command, but no visible refresh UI yet.
 - Directory scanning is not recursive, so apps nested in subfolders are missed.
-- Icon cache filenames are based on app filename rather than a full path hash, which can collide for apps with the same filename in different directories.
 - `recentApps` is not based on actual app usage or recently installed apps.
 - The modal says "Drag an item into the dock", but app tiles are currently click-to-add.
 - The view toggle button is presentational and not wired to alternate layout state.
@@ -312,7 +317,6 @@ The hook-based preload is the key idea. The app list is not requested on each mo
 ## Likely Next Directions
 
 - Add an explicit refresh UI that calls the existing catalog refresh command.
-- Hash full app paths for icon cache filenames to avoid collisions.
 - Add recursive app discovery for common nested app folders.
 - Replace pseudo-recents with real recent installs, recent launches, or user-added history.
 - Wire the view toggle to switch between grid and list views.

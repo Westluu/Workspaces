@@ -10,6 +10,7 @@ use std::{
 
 use base64::{engine::general_purpose, Engine as _};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tauri::{Emitter, Manager, PhysicalPosition};
 
 #[cfg(target_os = "macos")]
@@ -240,18 +241,52 @@ if (!pngData || !pngData.writeToFileAtomically(outputPath, true)) {{
 
 fn app_icon_cache_path(app_path: &Path) -> Result<PathBuf, String> {
     let cache_dir = std::env::temp_dir().join("workspace-dock-icons");
+    Ok(cache_dir.join(format!("{}.png", app_icon_cache_key(app_path))))
+}
+
+fn legacy_app_icon_cache_path(app_path: &Path) -> Result<PathBuf, String> {
+    let cache_dir = std::env::temp_dir().join("workspace-dock-icons");
     Ok(cache_dir.join(format!("{}.png", safe_file_name(app_path))))
+}
+
+fn app_icon_cache_key(app_path: &Path) -> String {
+    let normalized_path = app_path.to_string_lossy();
+    let mut hasher = Sha256::new();
+    hasher.update(normalized_path.as_bytes());
+    let digest = hasher.finalize();
+    format!("v2-{}", general_purpose::URL_SAFE_NO_PAD.encode(digest))
 }
 
 fn read_cached_app_icon(app_path: &Path) -> Option<Vec<u8>> {
     let cache_path = app_icon_cache_path(app_path).ok()?;
-    let icon_bytes = fs::read(cache_path).ok()?;
+    let icon_bytes = fs::read(&cache_path)
+        .ok()
+        .or_else(|| migrate_legacy_cached_app_icon(app_path, &cache_path))?;
 
     if icon_bytes.is_empty() {
         None
     } else {
         Some(icon_bytes)
     }
+}
+
+fn migrate_legacy_cached_app_icon(app_path: &Path, cache_path: &Path) -> Option<Vec<u8>> {
+    let legacy_cache_path = legacy_app_icon_cache_path(app_path).ok()?;
+    if legacy_cache_path == cache_path {
+        return None;
+    }
+
+    let icon_bytes = fs::read(&legacy_cache_path).ok()?;
+    if icon_bytes.is_empty() {
+        return None;
+    }
+
+    if let Some(parent) = cache_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(cache_path, &icon_bytes);
+
+    Some(icon_bytes)
 }
 
 fn update_cached_icon_for_app(app_path: &str, icon_bytes: &[u8]) {
