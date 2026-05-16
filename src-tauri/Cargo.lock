@@ -4819,6 +4819,7 @@ dependencies = [
 name = "workspace-dock"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "block2",
  "libc",
  "objc2",

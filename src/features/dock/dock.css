@@ -1,11 +1,12 @@
 .playground {
-  display: grid;
-  place-items: end center;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
   width: 100%;
   height: 100%;
-  padding-bottom: 8px;
+  padding: 8px 0;
   box-sizing: border-box;
-  overflow: hidden;
 }
 
 .dock {
@@ -172,4 +173,64 @@
     0 20px 60px rgba(0, 0, 0, 0.16);
   transform: translateX(-50%);
   pointer-events: none;
+}
+
+/* Edit mode */
+.dock.editing {
+  outline: 2px solid rgba(0, 200, 255, 0.7);
+  outline-offset: 4px;
+  border-radius: 20px;
+}
+
+.remove-badge {
+  position: absolute;
+  top: -6px;
+  left: -6px;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(120, 120, 128, 0.72);
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  color: #fff;
+  cursor: pointer;
+  z-index: 5;
+  border: none;
+  padding: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.remove-badge:hover {
+  background: rgba(255, 69, 58, 0.8);
+}
+
+.dock-item-wrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.add-item-slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  border: 2px dashed rgba(255, 255, 255, 0.3);
+  border-radius: 10px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 20px;
+  cursor: pointer;
+  padding: 0;
+  transition: border-color 150ms ease, color 150ms ease;
+}
+
+.add-item-slot:hover {
+  border-color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.6);
 }

@@ -16,6 +16,10 @@ export function getFallbackIcon(item: DockItem) {
     return "LH";
   }
 
+  if (item.type === "folder") {
+    return "📁";
+  }
+
   return item.label
     .split(/\s+/)
     .map((word) => word[0])
