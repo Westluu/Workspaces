@@ -1,6 +1,7 @@
 #[cfg(target_os = "macos")]
 use std::ptr::NonNull;
 use std::{
+    collections::HashSet,
     fs,
     path::{Path, PathBuf},
     process::Command,
@@ -79,6 +80,7 @@ struct AppCatalogDiskCache {
 }
 
 const APP_CATALOG_DISK_CACHE_VERSION: u32 = 1;
+const MIN_CACHED_ICON_BYTES: usize = 2048;
 
 static INSTALLED_APPS_CACHE: Mutex<Vec<InstalledApp>> = Mutex::new(Vec::new());
 static APP_CATALOG_REFRESH_IN_FLIGHT: Mutex<bool> = Mutex::new(false);
@@ -159,13 +161,15 @@ fn get_app_icon_bytes(app_path: &str) -> Result<Vec<u8>, String> {
         fs::create_dir_all(parent).map_err(|e| format!("Failed to create icon cache: {}", e))?;
     }
 
-    match convert_bundle_icon_to_png(&app_path, &output_path) {
+    // NSWorkspace knows about asset-catalog/system icons. Some Apple app bundles
+    // still declare tiny placeholder .icns files that convert to transparent PNGs.
+    match get_app_icon_via_nsworkspace(&app_path, &output_path) {
         Ok(icon_bytes) => Ok(icon_bytes),
-        Err(bundle_icon_error) => {
-            get_app_icon_via_nsworkspace(&app_path, &output_path).map_err(|workspace_error| {
+        Err(workspace_error) => {
+            convert_bundle_icon_to_png(&app_path, &output_path).map_err(|bundle_icon_error| {
                 format!(
-                    "{}; NSWorkspace fallback failed: {}",
-                    bundle_icon_error, workspace_error
+                    "NSWorkspace icon failed: {}; bundle icon fallback failed: {}",
+                    workspace_error, bundle_icon_error
                 )
             })
         }
@@ -199,7 +203,12 @@ fn convert_bundle_icon_to_png(app_path: &Path, output_path: &Path) -> Result<Vec
         ));
     }
 
-    fs::read(output_path).map_err(|e| format!("Failed to read converted app icon: {}", e))
+    let icon_bytes =
+        fs::read(output_path).map_err(|e| format!("Failed to read converted app icon: {}", e))?;
+    validate_icon_bytes(&icon_bytes)
+        .map_err(|e| format!("Converted app icon is not usable: {}", e))?;
+
+    Ok(icon_bytes)
 }
 
 fn get_app_icon_via_nsworkspace(app_path: &Path, output_path: &Path) -> Result<Vec<u8>, String> {
@@ -236,7 +245,12 @@ if (!pngData || !pngData.writeToFileAtomically(outputPath, true)) {{
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
 
-    fs::read(output_path).map_err(|e| format!("Failed to read NSWorkspace app icon: {}", e))
+    let icon_bytes =
+        fs::read(output_path).map_err(|e| format!("Failed to read NSWorkspace app icon: {}", e))?;
+    validate_icon_bytes(&icon_bytes)
+        .map_err(|e| format!("NSWorkspace app icon is not usable: {}", e))?;
+
+    Ok(icon_bytes)
 }
 
 fn app_icon_cache_path(app_path: &Path) -> Result<PathBuf, String> {
@@ -263,7 +277,7 @@ fn read_cached_app_icon(app_path: &Path) -> Option<Vec<u8>> {
         .ok()
         .or_else(|| migrate_legacy_cached_app_icon(app_path, &cache_path))?;
 
-    if icon_bytes.is_empty() {
+    if validate_icon_bytes(&icon_bytes).is_err() {
         None
     } else {
         Some(icon_bytes)
@@ -277,7 +291,7 @@ fn migrate_legacy_cached_app_icon(app_path: &Path, cache_path: &Path) -> Option<
     }
 
     let icon_bytes = fs::read(&legacy_cache_path).ok()?;
-    if icon_bytes.is_empty() {
+    if validate_icon_bytes(&icon_bytes).is_err() {
         return None;
     }
 
@@ -287,6 +301,17 @@ fn migrate_legacy_cached_app_icon(app_path: &Path, cache_path: &Path) -> Option<
     let _ = fs::write(cache_path, &icon_bytes);
 
     Some(icon_bytes)
+}
+
+fn validate_icon_bytes(icon_bytes: &[u8]) -> Result<(), String> {
+    if icon_bytes.len() < MIN_CACHED_ICON_BYTES {
+        return Err(format!(
+            "icon data is too small ({} bytes)",
+            icon_bytes.len()
+        ));
+    }
+
+    Ok(())
 }
 
 fn update_cached_icon_for_app(app_path: &str, icon_bytes: &[u8]) {
@@ -424,44 +449,134 @@ fn spawn_app_catalog_background_refresh() {
 }
 
 fn discover_installed_apps() -> Vec<InstalledApp> {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let search_dirs = vec![
-        PathBuf::from("/Applications"),
-        PathBuf::from("/System/Applications"),
-        PathBuf::from(format!("{}/Applications", home)),
-    ];
+    let started_at = Instant::now();
+    let (source, paths) = match discover_app_paths_with_spotlight() {
+        Ok(paths) if !paths.is_empty() => ("spotlight", paths),
+        Ok(_) => {
+            eprintln!("[app-catalog] spotlight discovery returned no usable app paths");
+            ("folder-scan", discover_app_paths_with_folder_scan())
+        }
+        Err(e) => {
+            eprintln!("[app-catalog] spotlight discovery failed error=\"{}\"", e);
+            ("folder-scan", discover_app_paths_with_folder_scan())
+        }
+    };
 
-    let mut apps: Vec<InstalledApp> = Vec::new();
+    let apps = build_installed_apps_from_paths(paths);
 
-    for dir in &search_dirs {
+    eprintln!(
+        "[app-catalog] discovery source={} count={} duration_ms={}",
+        source,
+        apps.len(),
+        started_at.elapsed().as_millis()
+    );
+
+    apps
+}
+
+fn discover_app_paths_with_spotlight() -> Result<Vec<PathBuf>, String> {
+    let output = Command::new("mdfind")
+        .arg("kMDItemContentTypeTree == 'com.apple.application-bundle'")
+        .output()
+        .map_err(|e| format!("Failed to run Spotlight app discovery: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "Spotlight app discovery failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+
+    let paths = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .filter(|path| is_supported_app_location(path))
+        .collect::<Vec<_>>();
+
+    Ok(normalize_app_paths(paths))
+}
+
+fn discover_app_paths_with_folder_scan() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+
+    for dir in supported_app_locations() {
         if !dir.exists() {
             continue;
         }
-        let entries = match fs::read_dir(dir) {
-            Ok(e) => e,
-            Err(_) => continue,
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
         };
+
         for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("app") {
-                let info_plist = path.join("Contents").join("Info.plist");
-                let name = read_app_display_name(&path, &info_plist);
-                let bundle_id =
-                    read_bundle_id(&info_plist).unwrap_or_else(|| safe_file_name(&path));
-                apps.push(InstalledApp {
-                    name,
-                    path: path.to_string_lossy().to_string(),
-                    bundle_id,
-                    cached_icon: read_cached_app_icon(&path)
-                        .map(|icon_bytes| png_bytes_to_data_url(&icon_bytes)),
-                });
-            }
+            paths.push(entry.path());
         }
     }
+
+    normalize_app_paths(paths)
+}
+
+fn build_installed_apps_from_paths(paths: Vec<PathBuf>) -> Vec<InstalledApp> {
+    let mut apps = paths
+        .into_iter()
+        .map(|path| {
+            let info_plist = path.join("Contents").join("Info.plist");
+            let name = read_app_display_name(&path, &info_plist);
+            let bundle_id = read_bundle_id(&info_plist).unwrap_or_else(|| safe_file_name(&path));
+
+            InstalledApp {
+                name,
+                path: path.to_string_lossy().to_string(),
+                bundle_id,
+                cached_icon: read_cached_app_icon(&path)
+                    .map(|icon_bytes| png_bytes_to_data_url(&icon_bytes)),
+            }
+        })
+        .collect::<Vec<_>>();
 
     apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
     apps
+}
+
+fn normalize_app_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut seen = HashSet::new();
+    let mut normalized = Vec::new();
+
+    for path in paths {
+        if !path.exists() || path.extension().and_then(|e| e.to_str()) != Some("app") {
+            continue;
+        }
+
+        let dedupe_key = path
+            .canonicalize()
+            .unwrap_or_else(|_| path.clone())
+            .to_string_lossy()
+            .to_string();
+
+        if seen.insert(dedupe_key) {
+            normalized.push(path);
+        }
+    }
+
+    normalized
+}
+
+fn supported_app_locations() -> Vec<PathBuf> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    vec![
+        PathBuf::from("/Applications"),
+        PathBuf::from("/System/Applications"),
+        PathBuf::from("/System/Library/CoreServices/Applications"),
+        PathBuf::from(format!("{}/Applications", home)),
+    ]
+}
+
+fn is_supported_app_location(path: &Path) -> bool {
+    supported_app_locations()
+        .iter()
+        .any(|location| path.starts_with(location))
 }
 
 fn store_installed_apps_cache(apps: Vec<InstalledApp>) -> Result<Vec<InstalledApp>, String> {

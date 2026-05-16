@@ -47,9 +47,18 @@ Slice 5 removes icon cache filename collisions:
 - New cache keys are prefixed with `v2-` so the cache format can evolve safely.
 - Existing filename-derived cache entries are read as a migration fallback and copied into the hashed cache path on first use.
 
+Slice 6 makes Spotlight the primary app discovery source:
+
+- `list_installed_apps` still returns memory first, then the versioned disk metadata cache, and only discovers apps on a cold cache miss.
+- Disk metadata cache hits still trigger a background refresh so modal cold-start behavior stays fast.
+- Native discovery now asks Spotlight with `mdfind "kMDItemContentTypeTree == 'com.apple.application-bundle'"`.
+- Spotlight results are limited to supported app locations: `/Applications`, `/System/Applications`, `/System/Library/CoreServices/Applications`, and `~/Applications`.
+- Discovered paths are normalized, must exist, must end in `.app`, and are deduped by canonical path when possible.
+- If Spotlight fails or returns no usable app paths, Rust falls back to a conservative top-level folder scan of the same supported locations.
+- Because Spotlight returns indexed bundles, the catalog can now include nested apps that the old top-level folder scan missed.
+
 Later slices can change internals without changing the modal:
 
-- Use Spotlight/`NSMetadataQuery` or `mdfind` as the primary discovery source.
 - Add directory watching or explicit refresh UI once the catalog is stable.
 
 Baseline metrics to compare before and after each slice:
@@ -150,9 +159,8 @@ sequenceDiagram
   Rust->>Rust: Return INSTALLED_APPS_CACHE if populated
   Rust->>Disk: Return versioned metadata cache if populated
   Rust->>FS: Start background refresh after disk hit
-  Rust->>FS: Scan /Applications
-  Rust->>FS: Scan /System/Applications
-  Rust->>FS: Scan ~/Applications
+  Rust->>FS: Run Spotlight app discovery
+  Rust->>FS: Fall back to top-level folder scan if Spotlight fails or returns no usable paths
   Rust->>Rust: Read display name and bundle id
   Rust->>Rust: Sort by lowercased app name
   Rust->>Rust: Store in INSTALLED_APPS_CACHE
@@ -164,15 +172,18 @@ sequenceDiagram
 
 Current native behavior:
 
-- The scan is top-level only. It looks for entries with an `.app` extension directly inside the three search directories.
+- App discovery is Spotlight-first through `mdfind`, which can return nested indexed application bundles.
+- Spotlight results are filtered to `/Applications`, `/System/Applications`, `/System/Library/CoreServices/Applications`, and `~/Applications`.
+- App paths are normalized before rows are built: paths must exist, must have an `.app` extension, and are deduped by canonical path when possible.
+- If Spotlight fails or returns no usable app paths, Rust falls back to a top-level folder scan of the supported app locations.
 - Display names come from Spotlight metadata first via `mdls kMDItemDisplayName`.
 - If Spotlight does not provide a name, Rust falls back to `CFBundleDisplayName`, then `CFBundleName`, then a filename-derived fallback.
 - Bundle IDs come from `CFBundleIdentifier`, falling back to the safe filename.
 - Results are cached in process memory in `INSTALLED_APPS_CACHE`.
 - App metadata is also cached in `~/Library/Application Support/workspace-dock/app-catalog-cache.json`.
 - Disk metadata cache stores only name, path, and bundle ID; icons remain in the PNG cache.
-- When disk metadata is used, Rust refreshes the folder scan in the background and saves the updated metadata for the next launch.
-- `refresh_installed_apps` clears the in-memory cache and rebuilds memory plus disk cache with the same scan.
+- When disk metadata is used, Rust refreshes discovery in the background and saves the updated metadata for the next launch.
+- `refresh_installed_apps` clears the in-memory cache and rebuilds memory plus disk cache with the same discovery flow.
 
 ## Icon Loading
 
