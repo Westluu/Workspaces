@@ -113,24 +113,37 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  min-height: 32px;
   padding: 6px 10px;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
+  cursor: text;
   margin-bottom: 12px;
 }
 
+.add-item-search:focus-within {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.24);
+}
+
 .add-item-search-icon {
+  flex: 0 0 auto;
   font-size: 12px;
   opacity: 0.5;
+  pointer-events: none;
 }
 
 .add-item-search-input {
   flex: 1;
+  min-width: 0;
+  align-self: stretch;
+  appearance: none;
   background: transparent;
   border: none;
   outline: none;
   color: rgba(255, 255, 255, 0.92);
+  cursor: text;
   font-size: 13px;
   font-family: inherit;
 }
@@ -140,6 +153,7 @@
 }
 
 .add-item-search-clear {
+  flex: 0 0 auto;
   background: rgba(255, 255, 255, 0.1);
   border: none;
   color: rgba(255, 255, 255, 0.5);

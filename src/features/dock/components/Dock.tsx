@@ -83,36 +83,20 @@ export function Dock({
             )}
           </dock-item>
         ))}
-        {editing ? (
-          <dock-item>
-            <button
-              className="add-item-slot"
-              aria-label="Add item"
-              data-dock-label="Add Item"
-              onClick={onAddItemClick}
-              onMouseEnter={(e) => onTitleMouse("Add Item", e)}
-              onMouseMove={(e) => onTitleMouse("Add Item", e)}
-              onFocus={(e) => onTitleFocus("Add Item", e)}
-              onBlur={onClearTitle}
-            >
-              +
-            </button>
-          </dock-item>
-        ) : (
-          <dock-item>
-            <button
-              className="dock-item theme-toggle"
-              aria-label="Toggle theme"
-              data-dock-label="Dark"
-              onMouseEnter={(e) => onTitleMouse("Dark", e)}
-              onMouseMove={(e) => onTitleMouse("Dark", e)}
-              onFocus={(e) => onTitleFocus("Dark", e)}
-              onBlur={onClearTitle}
-            >
-              <span aria-hidden="true">☾</span>
-            </button>
-          </dock-item>
-        )}
+        <dock-item>
+          <button
+            className="add-item-slot"
+            aria-label="Add item"
+            data-dock-label="Add Item"
+            onClick={onAddItemClick}
+            onMouseEnter={(e) => onTitleMouse("Add Item", e)}
+            onMouseMove={(e) => onTitleMouse("Add Item", e)}
+            onFocus={(e) => onTitleFocus("Add Item", e)}
+            onBlur={onClearTitle}
+          >
+            +
+          </button>
+        </dock-item>
       </dock-wrapper>
     </div>
   );

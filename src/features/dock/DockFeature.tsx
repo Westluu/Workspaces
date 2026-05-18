@@ -11,7 +11,12 @@ import { useDockItemsStore } from "./hooks/useDockItemsStore";
 import { useDockEditMode } from "./hooks/useDockEditMode";
 import { useNativeDockMouseTracking } from "./hooks/useNativeDockMouseTracking";
 import { useAppCatalog } from "./hooks/useAppCatalog";
-import { openDockItem, resizeDockPanel, getDockPanelFrame } from "./services/dockService";
+import {
+  focusDockPanel,
+  getDockPanelFrame,
+  openDockItem,
+  resizeDockPanel,
+} from "./services/dockService";
 import { AddItemModal } from "../add-item/AddItemModal";
 import type { DockItem, DockItemInput } from "./types";
 import "./dock.css";
@@ -118,15 +123,10 @@ export function DockFeature() {
   }
 
   function handleAddItemClick() {
-    const startedAt = performance.now();
     setShowModal(true);
     // Measure after React has inserted the modal into the DOM.
     requestAnimationFrame(() => {
-      console.debug(
-        `[app-catalog] modal open rendered duration_ms=${Math.round(
-          performance.now() - startedAt,
-        )}`,
-      );
+      void focusDockPanel();
       expandWindowForModal();
     });
   }
@@ -162,7 +162,7 @@ export function DockFeature() {
     >
       {!isDockHidden && dockTitle && <DockTitle dockTitle={dockTitle} />}
       {/* Modal sits above the dock as a normal flex child — no positioning tricks. */}
-      {isEditing && showModal && (
+      {showModal && (
         <AddItemModal
           dockItems={items}
           installedApps={installedApps}

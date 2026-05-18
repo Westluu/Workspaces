@@ -1,3 +1,5 @@
+import { useRef } from "react";
+
 type SearchBarProps = {
   placeholder: string;
   value: string;
@@ -5,22 +7,39 @@ type SearchBarProps = {
 };
 
 export function SearchBar({ placeholder, value, onChange }: SearchBarProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
   return (
-    <div className="add-item-search">
+    <div
+      className="add-item-search"
+      role="search"
+      onMouseDown={(event) => {
+        if (event.target instanceof HTMLButtonElement) {
+          return;
+        }
+
+        inputRef.current?.focus();
+      }}
+    >
       <span className="add-item-search-icon" aria-hidden="true">
         🔍
       </span>
       <input
+        ref={inputRef}
         className="add-item-search-input"
-        type="text"
+        type="search"
         placeholder={placeholder}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(event) => onChange(event.currentTarget.value)}
       />
       {value && (
         <button
           className="add-item-search-clear"
-          onClick={() => onChange("")}
+          type="button"
+          onClick={() => {
+            onChange("");
+            inputRef.current?.focus();
+          }}
           aria-label="Clear search"
         >
           ✕

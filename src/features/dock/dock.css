@@ -146,13 +146,6 @@
     linear-gradient(145deg, #52e4a3 0%, #12a875 47%, #08745a 100%);
 }
 
-.theme-toggle {
-  font: inherit;
-  font-size: 27px;
-  line-height: 1;
-  background: #1f1f1f;
-}
-
 .error-toast {
   position: absolute;
   bottom: 4px;

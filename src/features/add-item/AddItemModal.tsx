@@ -35,17 +35,19 @@ export function AddItemModal({
       .map((item) => item.appPath),
   );
 
-  const filteredApps = installedApps.filter(
-    (app) =>
-      app.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      app.bundleId.toLowerCase().includes(searchQuery.toLowerCase()),
-  );
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const availableApps = installedApps.filter((app) => !dockAppPaths.has(app.path));
+  const recentApps = normalizedSearchQuery ? [] : availableApps.slice(-3).reverse();
+  const suggestionApps = availableApps.filter((app) => {
+    if (!normalizedSearchQuery) {
+      return !recentApps.some((recentApp) => recentApp.path === app.path);
+    }
 
-  const suggestions = filteredApps.filter((app) => !dockAppPaths.has(app.path));
-  const recentApps = suggestions.slice(-3).reverse();
-  const suggestionApps = suggestions.filter(
-    (app) => !recentApps.some((r) => r.path === app.path),
-  );
+    return (
+      app.name.toLowerCase().includes(normalizedSearchQuery) ||
+      app.bundleId.toLowerCase().includes(normalizedSearchQuery)
+    );
+  });
 
   function handleAddApp(app: InstalledApp) {
     onAddItem({

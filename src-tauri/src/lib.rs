@@ -1,5 +1,5 @@
 #[cfg(target_os = "macos")]
-use std::ptr::NonNull;
+use std::{ffi::CStr, ptr::NonNull, sync::OnceLock};
 use std::{
     collections::HashSet,
     fs,
@@ -19,13 +19,14 @@ use block2::RcBlock;
 #[cfg(target_os = "macos")]
 use objc2::rc::Retained;
 #[cfg(target_os = "macos")]
-use objc2::runtime::AnyObject;
+use objc2::runtime::{AnyClass, AnyObject, Bool, ClassBuilder, Sel};
 #[cfg(target_os = "macos")]
-use objc2::MainThreadOnly;
+use objc2::{class, msg_send, sel};
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{
-    NSBackingStoreType, NSColor, NSEvent, NSEventMask, NSPanel, NSScreen, NSView, NSWindow,
-    NSWindowCollectionBehavior, NSWindowStyleMask, NSWorkspace,
+    NSApplicationActivationOptions, NSBackingStoreType, NSColor, NSEvent, NSEventMask, NSPanel,
+    NSRunningApplication, NSScreen, NSView, NSWindow, NSWindowCollectionBehavior,
+    NSWindowStyleMask, NSWorkspace,
     NSWorkspaceActiveSpaceDidChangeNotification, NSWorkspaceDidActivateApplicationNotification,
 };
 #[cfg(target_os = "macos")]
@@ -79,7 +80,7 @@ struct AppCatalogDiskCache {
     apps: Vec<CachedInstalledApp>,
 }
 
-const APP_CATALOG_DISK_CACHE_VERSION: u32 = 1;
+const APP_CATALOG_DISK_CACHE_VERSION: u32 = 2;
 const MIN_CACHED_ICON_BYTES: usize = 2048;
 
 static INSTALLED_APPS_CACHE: Mutex<Vec<InstalledApp>> = Mutex::new(Vec::new());
@@ -102,6 +103,34 @@ unsafe impl Send for SendablePtr {}
 
 #[cfg(target_os = "macos")]
 static DOCK_PANEL_PTR: Mutex<Option<SendablePtr>> = Mutex::new(None);
+
+#[cfg(target_os = "macos")]
+static FOCUSABLE_DOCK_PANEL_CLASS: OnceLock<&'static AnyClass> = OnceLock::new();
+
+#[cfg(target_os = "macos")]
+fn focusable_dock_panel_class() -> &'static AnyClass {
+    FOCUSABLE_DOCK_PANEL_CLASS.get_or_init(|| {
+        extern "C-unwind" fn can_become_key_or_main(
+            _this: &AnyObject,
+            _cmd: Sel,
+        ) -> Bool {
+            Bool::YES
+        }
+
+        let superclass = class!(NSPanel);
+        let class_name =
+            CStr::from_bytes_with_nul(b"WorkspaceDockFocusablePanel\0").unwrap();
+        let mut builder = ClassBuilder::new(class_name, superclass).unwrap();
+
+        unsafe {
+            let method: extern "C-unwind" fn(_, _) -> _ = can_become_key_or_main;
+            builder.add_method(sel!(canBecomeKeyWindow), method);
+            builder.add_method(sel!(canBecomeMainWindow), method);
+        }
+
+        builder.register()
+    })
+}
 
 #[cfg(target_os = "macos")]
 const FINDER_BUNDLE_ID: &str = "com.apple.finder";
@@ -548,6 +577,9 @@ fn normalize_app_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
         if !path.exists() || path.extension().and_then(|e| e.to_str()) != Some("app") {
             continue;
         }
+        if is_background_only_app(&path) {
+            continue;
+        }
 
         let dedupe_key = path
             .canonicalize()
@@ -704,6 +736,11 @@ fn read_bundle_id(info_plist: &Path) -> Option<String> {
     read_bundle_string(info_plist, "CFBundleIdentifier")
 }
 
+fn is_background_only_app(app_path: &Path) -> bool {
+    let info_plist = app_path.join("Contents").join("Info.plist");
+    read_bundle_bool(&info_plist, "LSBackgroundOnly").unwrap_or(false)
+}
+
 fn read_app_display_name(app_path: &Path, info_plist: &Path) -> String {
     read_spotlight_display_name(app_path)
         .or_else(|| read_bundle_string(info_plist, "CFBundleDisplayName"))
@@ -748,6 +785,15 @@ fn read_bundle_string(info_plist: &Path, key: &str) -> Option<String> {
     }
 
     normalize_metadata_value(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn read_bundle_bool(info_plist: &Path, key: &str) -> Option<bool> {
+    let value = read_bundle_string(info_plist, key)?;
+    match value.to_lowercase().as_str() {
+        "1" | "true" | "yes" => Some(true),
+        "0" | "false" | "no" => Some(false),
+        _ => None,
+    }
 }
 
 fn normalize_metadata_value(value: &str) -> Option<String> {
@@ -961,13 +1007,18 @@ fn install_native_dock_panel<R: tauri::Runtime>(app: &mut tauri::App<R>) -> Resu
         NSSize::new(frame.size.width, frame.size.height),
     );
 
-    let panel = NSPanel::initWithContentRect_styleMask_backing_defer(
-        NSPanel::alloc(mtm),
-        frame,
-        NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel,
-        NSBackingStoreType::Buffered,
-        false,
-    );
+    let panel_class = focusable_dock_panel_class();
+    let panel: Retained<NSPanel> = unsafe {
+        let panel: *mut NSPanel = msg_send![panel_class, alloc];
+        let panel: *mut NSPanel = msg_send![
+            panel,
+            initWithContentRect: frame,
+            styleMask: NSWindowStyleMask::Borderless,
+            backing: NSBackingStoreType::Buffered,
+            defer: false
+        ];
+        Retained::from_raw(panel).ok_or("Failed to create dock panel")?
+    };
 
     configure_native_dock_panel(&panel);
 
@@ -997,7 +1048,7 @@ fn install_native_dock_panel<R: tauri::Runtime>(_app: &mut tauri::App<R>) -> Res
 #[cfg(target_os = "macos")]
 fn configure_native_dock_panel(panel: &NSPanel) {
     panel.setFloatingPanel(true);
-    panel.setBecomesKeyOnlyIfNeeded(true);
+    panel.setBecomesKeyOnlyIfNeeded(false);
     panel.setWorksWhenModal(true);
     panel.setAcceptsMouseMovedEvents(true);
     panel.setHidesOnDeactivate(false);
@@ -1201,6 +1252,35 @@ fn get_dock_panel_frame() -> Result<(f64, f64, f64, f64), String> {
     }
 }
 
+#[tauri::command]
+fn focus_dock_panel() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let _mtm = MainThreadMarker::new().ok_or("Must be on main thread")?;
+        let guard = DOCK_PANEL_PTR
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?;
+        let sendable_ptr = guard.as_ref().ok_or("No dock panel stored")?;
+        let panel = unsafe { sendable_ptr.0.cast::<NSPanel>().as_ref() };
+
+        let app = NSRunningApplication::currentApplication();
+        #[allow(deprecated)]
+        app.activateWithOptions(NSApplicationActivationOptions::ActivateIgnoringOtherApps);
+
+        panel.setBecomesKeyOnlyIfNeeded(false);
+        panel.makeKeyAndOrderFront(None);
+        if let Some(content_view) = panel.contentView() {
+            panel.makeFirstResponder(Some(&content_view));
+        }
+
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("Not supported on this platform".to_string())
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     install_dock_restore_signal_handler();
@@ -1227,6 +1307,7 @@ pub fn run() {
             get_dock_items,
             get_dock_visibility,
             get_dock_panel_frame,
+            focus_dock_panel,
             list_installed_apps,
             open_dock_item,
             refresh_installed_apps,

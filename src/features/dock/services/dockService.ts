@@ -55,3 +55,7 @@ export async function getDockPanelFrame(): Promise<{
   );
   return { width, height, x, y };
 }
+
+export async function focusDockPanel(): Promise<void> {
+  await invoke("focus_dock_panel");
+}

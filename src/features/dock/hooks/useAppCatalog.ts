@@ -49,7 +49,6 @@ export function useAppCatalog() {
     const pending = iconPromisesRef.current[appPath];
     if (pending) return pending;
 
-    const startedAt = performance.now();
     const promise = getAppIcon(appPath)
       .then((iconBytes) => {
         const dataUrl = pngBytesToDataUrl(iconBytes);
@@ -62,20 +61,9 @@ export function useAppCatalog() {
           return nextIcons;
         });
 
-        console.debug(
-          `[app-catalog] icon loaded path="${appPath}" duration_ms=${Math.round(
-            performance.now() - startedAt,
-          )}`,
-        );
-
         return dataUrl;
       })
-      .catch((e) => {
-        console.debug(
-          `[app-catalog] icon failed path="${appPath}" duration_ms=${Math.round(
-            performance.now() - startedAt,
-          )} error="${String(e)}"`,
-        );
+      .catch(() => {
         return null;
       })
       .finally(() => {
@@ -87,8 +75,6 @@ export function useAppCatalog() {
   }, []);
 
   const loadApps = useCallback(async (mode: "initial" | "refresh") => {
-    const startedAt = performance.now();
-
     try {
       setStatus((currentStatus) =>
         mode === "refresh" && currentStatus !== "loading" ? "refreshing" : "loading",
@@ -119,18 +105,8 @@ export function useAppCatalog() {
           iconsRef.current = mergedIcons;
           return mergedIcons;
         });
-
-        console.debug(
-          `[app-catalog] cached icons attached count=${Object.keys(cachedIcons).length}`,
-        );
       }
       setStatus("ready");
-
-      console.debug(
-        `[app-catalog] ${mode} app list loaded count=${
-          nextApps.length
-        } duration_ms=${Math.round(performance.now() - startedAt)}`,
-      );
 
       return nextApps;
     } catch (e) {
@@ -139,12 +115,6 @@ export function useAppCatalog() {
         setError(message);
         setStatus("error");
       }
-
-      console.debug(
-        `[app-catalog] ${mode} app list failed duration_ms=${Math.round(
-          performance.now() - startedAt,
-        )} error="${message}"`,
-      );
 
       return [];
     }
